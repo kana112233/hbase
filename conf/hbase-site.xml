@@ -21,4 +21,28 @@
  */
 -->
 <configuration>
+    <property>
+        <name>hbase.rootdir</name>
+        <value>file:///home/hh/data/hbase</value>
+    </property>
+
+    <property>
+        <name>hbase.defaults.for.version.skip</name>
+        <value>true</value>
+    </property>
+
+    <property>
+        <name>hbase.zookeeper.quorum</name>
+        <value>min1:2181</value>
+    </property>
+
+    <property>
+        <name>hbase.cluster.distributed</name>
+        <value>true</value>
+    </property>
+
+    <property>
+        <name>hbase.zookeeper.property.dataDir</name>
+        <value>/home/hh/data/zookeeper2</value>
+    </property>
 </configuration>
