@@ -235,8 +235,7 @@ public class AssignmentManager {
 
   private final int forceRegionRetainmentRetries;
 
-  private final RegionInTransitionTracker regionInTransitionTracker =
-    new RegionInTransitionTracker();
+  private final RegionInTransitionTracker regionInTransitionTracker;
 
   public AssignmentManager(MasterServices master, MasterRegion masterRegion) {
     this(master, masterRegion, new RegionStateStore(master, masterRegion));
@@ -246,6 +245,7 @@ public class AssignmentManager {
     this.master = master;
     this.regionStateStore = stateStore;
     this.metrics = new MetricsAssignmentManager();
+    this.regionInTransitionTracker = new RegionInTransitionTracker(metrics::updateRitDuration);
     this.masterRegion = masterRegion;
 
     final Configuration conf = master.getConfiguration();
@@ -354,7 +354,7 @@ public class AssignmentManager {
             if (RegionReplicaUtil.isDefaultReplica(regionInfo.getReplicaId())) {
               setMetaAssigned(regionInfo, state == State.OPEN);
             }
-            LOG.debug("Loaded hbase:meta {}", regionNode);
+            LOG.debug("Loaded {} {}", TableName.META_TABLE_NAME, regionNode);
           }, result);
       }
     }
@@ -797,8 +797,10 @@ public class AssignmentManager {
         preTransitCheck(regionNode, STATES_EXPECTED_ON_ASSIGN);
       }
       assert regionNode.getProcedure() == null;
-      return regionNode.setProcedure(
+      TransitRegionStateProcedure proc = regionNode.setProcedure(
         TransitRegionStateProcedure.assign(getProcedureEnvironment(), regionInfo, sn));
+      regionInTransitionTracker.handleRegionStateNodeOperation(regionNode);
+      return proc;
     } finally {
       regionNode.unlock();
     }
@@ -813,8 +815,10 @@ public class AssignmentManager {
     ServerName targetServer) {
     regionNode.lock();
     try {
-      return regionNode.setProcedure(TransitRegionStateProcedure.assign(getProcedureEnvironment(),
-        regionNode.getRegionInfo(), targetServer));
+      TransitRegionStateProcedure proc = regionNode.setProcedure(TransitRegionStateProcedure
+        .assign(getProcedureEnvironment(), regionNode.getRegionInfo(), targetServer));
+      regionInTransitionTracker.handleRegionStateNodeOperation(regionNode);
+      return proc;
     } finally {
       regionNode.unlock();
     }
@@ -1713,7 +1717,7 @@ public class AssignmentManager {
       if (state == null) {
         return false;
       }
-      return (statTimestamp - state.getStamp()) > (ritThreshold * 2);
+      return (statTimestamp - state.getStamp()) > (ritThreshold * 2L);
     }
 
     protected void update(final AssignmentManager am) {
@@ -1743,7 +1747,7 @@ public class AssignmentManager {
             ritsOverThreshold = new HashMap<String, RegionState>();
           }
           ritsOverThreshold.put(state.getRegion().getEncodedName(), state);
-          totalRITsTwiceThreshold += (ritTime > (ritThreshold * 2)) ? 1 : 0;
+          totalRITsTwiceThreshold += (ritTime > (ritThreshold * 2L)) ? 1 : 0;
         }
         if (oldestRITTime < ritTime) {
           oldestRITTime = ritTime;
@@ -1888,9 +1892,10 @@ public class AssignmentManager {
       }
       // add regions to RIT while visiting the meta
       regionInTransitionTracker.handleRegionStateNodeOperation(regionNode);
-      // If region location of region belongs to a dead server mark the region crashed
+      // If region is supposed to be serve traffic (NOT split and merged) and location of region
+      // belongs to a dead server mark the region crashed
       if (
-        regionNode.getRegionLocation() != null
+        regionNode.getRegionLocation() != null && !AssignmentManagerUtil.isSplitOrMerged(regionNode)
           && master.getServerManager().isServerDead(regionNode.getRegionLocation())
       ) {
         long timeOfCrash = master.getServerManager().getDeadServers()
@@ -1898,7 +1903,7 @@ public class AssignmentManager {
         if (timeOfCrash != 0) {
           regionNode.crashed(timeOfCrash);
         }
-        regionInTransitionTracker.regionCrashed(regionNode);
+        regionInTransitionTracker.regionCrashed(regionNode, timeOfCrash);
       }
     }
   };
@@ -1962,8 +1967,8 @@ public class AssignmentManager {
     boolean meta = isMetaRegion(hri);
     boolean metaLoaded = isMetaLoaded();
     if (!meta && !metaLoaded) {
-      throw new PleaseHoldException(
-        "Master not fully online; hbase:meta=" + meta + ", metaLoaded=" + metaLoaded);
+      throw new PleaseHoldException("Master not fully online; " + TableName.META_TABLE_NAME + "="
+        + meta + ", metaLoaded=" + metaLoaded);
     }
   }
 
@@ -2112,10 +2117,6 @@ public class AssignmentManager {
     return regionInTransitionTracker.getRegionsInTransition();
   }
 
-  public boolean isRegionInTransition(final RegionInfo regionInfo) {
-    return regionInTransitionTracker.isRegionInTransition(regionInfo);
-  }
-
   public int getRegionTransitScheduledCount() {
     return regionStates.getRegionTransitScheduledCount();
   }
@@ -2124,7 +2125,7 @@ public class AssignmentManager {
    * Get the number of regions in transition.
    */
   public int getRegionsInTransitionCount() {
-    return regionInTransitionTracker.getRegionsInTransition().size();
+    return regionInTransitionTracker.getRegionsInTransitionCount();
   }
 
   public SortedSet<RegionState> getRegionsStateInTransition() {
@@ -2353,7 +2354,7 @@ public class AssignmentManager {
       RegionStateNode node = regionStates.getOrCreateRegionStateNode(regionInfo);
       if (crashedServerName.equals(node.getRegionLocation())) {
         node.crashed(scp.getSubmittedTime());
-        regionInTransitionTracker.regionCrashed(node);
+        regionInTransitionTracker.regionCrashed(node, scp.getSubmittedTime());
       } else {
         LOG.warn("Region {} should be on crashed region server {} but is recorded on {}",
           regionInfo, crashedServerName, node.getRegionLocation());

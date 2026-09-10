@@ -189,11 +189,21 @@ public class HFileWriterImpl implements HFile.Writer {
   private final TimeRangeTracker timeRangeTracker;
   private long earliestPutTs = HConstants.LATEST_TIMESTAMP;
 
+  private String regionName;
+
+  private String familyName;
+
   public HFileWriterImpl(final Configuration conf, CacheConfig cacheConf, Path path,
     FSDataOutputStream outputStream, HFileContext fileContext) {
     this.outputStream = outputStream;
     this.path = path;
-    this.name = path != null ? path.getName() : outputStream.toString();
+    if (path != null) {
+      this.name = path.getName();
+      this.regionName = path.getParent().getParent().getName();
+      this.familyName = path.getParent().getName();
+    } else {
+      this.name = outputStream.toString();
+    }
     this.hFileContext = fileContext;
     // TODO: Move this back to upper layer
     this.timeRangeTracker = TimeRangeTracker.create(TimeRangeTracker.Type.NON_SYNC);
@@ -578,11 +588,11 @@ public class HFileWriterImpl implements HFile.Writer {
   private void doCacheOnWrite(long offset) {
     cacheConf.getBlockCache().ifPresent(cache -> {
       HFileBlock cacheFormatBlock = blockWriter.getBlockForCaching(cacheConf);
-      BlockCacheKey key = buildCacheBlockKey(offset, cacheFormatBlock.getBlockType());
-      if (!shouldCacheBlock(cache, key)) {
-        return;
-      }
       try {
+        BlockCacheKey key = buildCacheBlockKey(offset, cacheFormatBlock.getBlockType());
+        if (!shouldCacheBlock(cache, key)) {
+          return;
+        }
         cache.cacheBlock(key, cacheFormatBlock, cacheConf.isInMemory(), true);
       } finally {
         // refCnt will auto increase when block add to Cache, see RAMCache#putIfAbsent
@@ -593,7 +603,7 @@ public class HFileWriterImpl implements HFile.Writer {
 
   private BlockCacheKey buildCacheBlockKey(long offset, BlockType blockType) {
     if (path != null) {
-      return new BlockCacheKey(path, offset, true, blockType);
+      return new BlockCacheKey(name, familyName, regionName, offset, true, blockType, false);
     }
     return new BlockCacheKey(name, offset, true, blockType);
   }

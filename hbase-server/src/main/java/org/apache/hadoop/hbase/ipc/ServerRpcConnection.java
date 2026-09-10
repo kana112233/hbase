@@ -96,7 +96,7 @@ import org.apache.hadoop.hbase.shaded.protobuf.generated.TracingProtos.RPCTInfo;
 @edu.umd.cs.findbugs.annotations.SuppressWarnings(value = "VO_VOLATILE_INCREMENT",
     justification = "False positive according to http://sourceforge.net/p/findbugs/bugs/1032/")
 @InterfaceAudience.Private
-abstract class ServerRpcConnection implements Closeable {
+public abstract class ServerRpcConnection implements Closeable {
 
   private static final TextMapGetter<RPCTInfo> getter = new RPCTInfoGetter();
 
@@ -487,6 +487,10 @@ abstract class ServerRpcConnection implements Closeable {
       this.hostAddress, this.remotePort, version, this.useSasl, this.ugi, serviceName);
   }
 
+  public ConnectionHeader getConnectionHeader() {
+    return connectionHeader;
+  }
+
   /**
    * Send the response for connection header
    */
@@ -850,8 +854,14 @@ abstract class ServerRpcConnection implements Closeable {
     }
 
     @Override
+    public long readLong(int offset) {
+      return this.buf.getLong(offset);
+    }
+
+    @Override
     public int size() {
       return this.length;
     }
+
   }
 }

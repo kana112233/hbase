@@ -17,8 +17,9 @@
  */
 package org.apache.hadoop.hbase.master.procedure;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -27,44 +28,41 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.hbase.HBaseClassTestRule;
 import org.apache.hadoop.hbase.HBaseTestingUtil;
 import org.apache.hadoop.hbase.TableName;
+import org.apache.hadoop.hbase.TableNotFoundException;
 import org.apache.hadoop.hbase.client.ColumnFamilyDescriptor;
 import org.apache.hadoop.hbase.client.ColumnFamilyDescriptorBuilder;
 import org.apache.hadoop.hbase.client.RegionInfo;
 import org.apache.hadoop.hbase.client.TableDescriptor;
 import org.apache.hadoop.hbase.client.TableDescriptorBuilder;
+import org.apache.hadoop.hbase.master.HMaster;
 import org.apache.hadoop.hbase.regionserver.HRegion;
 import org.apache.hadoop.hbase.regionserver.MetricsRegionWrapperImpl;
 import org.apache.hadoop.hbase.testclassification.MasterTests;
 import org.apache.hadoop.hbase.testclassification.MediumTests;
 import org.apache.hadoop.hbase.util.Bytes;
-import org.junit.AfterClass;
-import org.junit.BeforeClass;
-import org.junit.ClassRule;
-import org.junit.Test;
-import org.junit.experimental.categories.Category;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Tag;
+import org.junit.jupiter.api.Test;
 
-@Category({ MasterTests.class, MediumTests.class })
+@Tag(MasterTests.TAG)
+@Tag(MediumTests.TAG)
 public class TestReopenTableRegionsIntegration {
-
-  @ClassRule
-  public static final HBaseClassTestRule CLASS_RULE =
-    HBaseClassTestRule.forClass(TestReopenTableRegionsIntegration.class);
 
   private static final HBaseTestingUtil UTIL = new HBaseTestingUtil();
   private static final TableName TABLE_NAME = TableName.valueOf("testLazyUpdateReopen");
   private static final byte[] CF = Bytes.toBytes("cf");
 
-  @BeforeClass
+  @BeforeAll
   public static void setupCluster() throws Exception {
     Configuration conf = UTIL.getConfiguration();
     conf.setInt(MasterProcedureConstants.MASTER_PROCEDURE_THREADS, 1);
     UTIL.startMiniCluster(1);
   }
 
-  @AfterClass
+  @AfterAll
   public static void tearDown() throws Exception {
     UTIL.shutdownMiniCluster();
   }
@@ -84,7 +82,7 @@ public class TestReopenTableRegionsIntegration {
     try {
       // Step 2: Capture initial tableDescriptorHash from all regions
       List<HRegion> regions = UTIL.getHBaseCluster().getRegions(TABLE_NAME);
-      assertEquals("Expected 3 regions", 3, regions.size());
+      assertEquals(3, regions.size(), "Expected 3 regions");
 
       Map<byte[], String> initialHashes = new HashMap<>();
 
@@ -98,7 +96,7 @@ public class TestReopenTableRegionsIntegration {
 
       // Verify all regions have same hash
       Set<String> uniqueHashes = new HashSet<>(initialHashes.values());
-      assertEquals("All regions should have same hash", 1, uniqueHashes.size());
+      assertEquals(1, uniqueHashes.size(), "All regions should have same hash");
       String initialHash = uniqueHashes.iterator().next();
 
       // Step 3: Perform lazy table descriptor update
@@ -128,14 +126,14 @@ public class TestReopenTableRegionsIntegration {
         try (MetricsRegionWrapperImpl wrapper = new MetricsRegionWrapperImpl(region)) {
           currentHash = wrapper.getTableDescriptorHash();
         }
-        assertEquals("Hash should NOT change without region reopen",
-          initialHashes.get(region.getRegionInfo().getRegionName()), currentHash);
+        assertEquals(initialHashes.get(region.getRegionInfo().getRegionName()), currentHash,
+          "Hash should NOT change without region reopen");
       }
 
       // Verify the table descriptor itself has changed
       TableDescriptor currentTd = UTIL.getAdmin().getDescriptor(TABLE_NAME);
       String newDescriptorHash = currentTd.getDescriptorHash();
-      assertNotEquals("Table descriptor should have new hash", initialHash, newDescriptorHash);
+      assertNotEquals(initialHash, newDescriptorHash, "Table descriptor should have new hash");
 
       // Step 5: Use new Admin API to reopen all regions
       UTIL.getAdmin().reopenTableRegions(TABLE_NAME);
@@ -166,15 +164,15 @@ public class TestReopenTableRegionsIntegration {
 
       // Step 6: Verify tableDescriptorHash HAS changed in all region metrics
       List<HRegion> reopenedRegions = UTIL.getHBaseCluster().getRegions(TABLE_NAME);
-      assertEquals("Should still have 3 regions", 3, reopenedRegions.size());
+      assertEquals(3, reopenedRegions.size(), "Should still have 3 regions");
 
       for (HRegion region : reopenedRegions) {
         String currentHash;
         try (MetricsRegionWrapperImpl wrapper = new MetricsRegionWrapperImpl(region)) {
           currentHash = wrapper.getTableDescriptorHash();
         }
-        assertNotEquals("Hash SHOULD change after region reopen", initialHash, currentHash);
-        assertEquals("Hash should match current table descriptor", newDescriptorHash, currentHash);
+        assertNotEquals(initialHash, currentHash, "Hash SHOULD change after region reopen");
+        assertEquals(newDescriptorHash, currentHash, "Hash should match current table descriptor");
       }
 
       // Verify all regions show the same new hash
@@ -184,7 +182,7 @@ public class TestReopenTableRegionsIntegration {
           newHashes.add(wrapper.getTableDescriptorHash());
         }
       }
-      assertEquals("All regions should have same new hash", 1, newHashes.size());
+      assertEquals(1, newHashes.size(), "All regions should have same new hash");
 
     } finally {
       UTIL.deleteTable(TABLE_NAME);
@@ -208,7 +206,7 @@ public class TestReopenTableRegionsIntegration {
     try {
       // Step 2: Capture initial hashes
       List<HRegion> regions = UTIL.getHBaseCluster().getRegions(tableName);
-      assertEquals("Expected 5 regions", 5, regions.size());
+      assertEquals(5, regions.size(), "Expected 5 regions");
 
       Map<byte[], String> initialHashes = new HashMap<>();
 
@@ -287,8 +285,8 @@ public class TestReopenTableRegionsIntegration {
         }
       }
 
-      assertEquals("Should have 2 regions with new hash", 2, newHashCount);
-      assertEquals("Should have 3 regions with old hash", 3, oldHashCount);
+      assertEquals(2, newHashCount, "Should have 2 regions with new hash");
+      assertEquals(3, oldHashCount, "Should have 3 regions with old hash");
 
       // Step 6: Reopen remaining regions
       List<RegionInfo> remainingRegions = new ArrayList<>();
@@ -325,10 +323,32 @@ public class TestReopenTableRegionsIntegration {
           currentHash = wrapper.getTableDescriptorHash();
         }
 
-        assertEquals("All regions should now have new hash", newDescriptorHash, currentHash);
+        assertEquals(newDescriptorHash, currentHash, "All regions should now have new hash");
       }
 
     } finally {
+      UTIL.deleteTable(tableName);
+    }
+  }
+
+  @Test
+  public void testReopenTableRegionsFailsCleanlyWhenDescriptorMissing() throws Exception {
+    TableName tableName = TableName.valueOf("testReopenTableRegionsFailsWhenDescriptorMissing");
+    TableDescriptor td = TableDescriptorBuilder.newBuilder(tableName)
+      .setColumnFamily(ColumnFamilyDescriptorBuilder.of(CF)).build();
+    UTIL.getAdmin().createTable(td, Bytes.toBytes("a"), Bytes.toBytes("z"), 3);
+    UTIL.waitTableAvailable(tableName);
+
+    HMaster master = UTIL.getMiniHBaseCluster().getMaster();
+    TableDescriptor removedDescriptor = null;
+    try {
+      removedDescriptor = master.getTableDescriptors().remove(tableName);
+      assertThrows(TableNotFoundException.class,
+        () -> UTIL.getAdmin().reopenTableRegions(tableName));
+    } finally {
+      if (removedDescriptor != null && master.getTableDescriptors().get(tableName) == null) {
+        master.getTableDescriptors().update(removedDescriptor);
+      }
       UTIL.deleteTable(tableName);
     }
   }

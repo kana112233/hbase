@@ -78,12 +78,14 @@ import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.LocatedFileStatus;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.hbase.ActiveClusterSuffix;
 import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.CellBuilderType;
 import org.apache.hadoop.hbase.CellComparator;
 import org.apache.hadoop.hbase.CellComparatorImpl;
 import org.apache.hadoop.hbase.CellScanner;
 import org.apache.hadoop.hbase.CellUtil;
+import org.apache.hadoop.hbase.ClusterId;
 import org.apache.hadoop.hbase.CompareOperator;
 import org.apache.hadoop.hbase.CompoundConfiguration;
 import org.apache.hadoop.hbase.DoNotRetryIOException;
@@ -150,6 +152,7 @@ import org.apache.hadoop.hbase.ipc.ServerCall;
 import org.apache.hadoop.hbase.keymeta.KeyManagementService;
 import org.apache.hadoop.hbase.keymeta.ManagedKeyDataCache;
 import org.apache.hadoop.hbase.keymeta.SystemKeyCache;
+import org.apache.hadoop.hbase.master.HMaster;
 import org.apache.hadoop.hbase.mob.MobFileCache;
 import org.apache.hadoop.hbase.monitoring.MonitoredTask;
 import org.apache.hadoop.hbase.monitoring.TaskMonitor;
@@ -171,6 +174,7 @@ import org.apache.hadoop.hbase.regionserver.wal.WALUtil;
 import org.apache.hadoop.hbase.replication.ReplicationUtils;
 import org.apache.hadoop.hbase.replication.regionserver.ReplicationObserver;
 import org.apache.hadoop.hbase.security.User;
+import org.apache.hadoop.hbase.security.access.AbstractReadOnlyController;
 import org.apache.hadoop.hbase.snapshot.SnapshotDescriptionUtils;
 import org.apache.hadoop.hbase.snapshot.SnapshotManifest;
 import org.apache.hadoop.hbase.trace.TraceUtil;
@@ -178,6 +182,7 @@ import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.CancelableProgressable;
 import org.apache.hadoop.hbase.util.ClassSize;
 import org.apache.hadoop.hbase.util.CommonFSUtils;
+import org.apache.hadoop.hbase.util.ConfigurationUtil;
 import org.apache.hadoop.hbase.util.CoprocessorConfigurationUtil;
 import org.apache.hadoop.hbase.util.EnvironmentEdgeManager;
 import org.apache.hadoop.hbase.util.FSUtils;
@@ -939,6 +944,10 @@ public class HRegion implements HeapSize, PropagatingConfigurationObserver, Regi
       : this.htableDescriptor.getDurability();
 
     decorateRegionConfiguration(conf);
+
+    CoprocessorConfigurationUtil.syncReadOnlyConfigurations(this.conf,
+      CoprocessorHost.REGION_COPROCESSOR_CONF_KEY);
+
     if (rsServices != null) {
       this.rsAccounting = this.rsServices.getRegionServerAccounting();
       // don't initialize coprocessors if not running within a regionserver
@@ -8509,7 +8518,7 @@ public class HRegion implements HeapSize, PropagatingConfigurationObserver, Regi
     ServiceDescriptor serviceDesc = instance.getDescriptorForType();
     String serviceName = CoprocessorRpcUtils.getServiceName(serviceDesc);
     if (coprocessorServiceHandlers.containsKey(serviceName)) {
-      LOG.error("Coprocessor service {} already registered, rejecting request from {} in region {}",
+      LOG.warn("Coprocessor service {} already registered, rejecting request from {} in region {}",
         serviceName, instance, this);
       return false;
     }
@@ -8977,20 +8986,73 @@ public class HRegion implements HeapSize, PropagatingConfigurationObserver, Regi
   }
 
   /**
-   * {@inheritDoc}
+   * Dynamically updates HRegion's configuration. Unlike {@link HMaster} and {@link HRegionServer},
+   * this {@code updatedConf} parameter does not reference the same {@link Configuration} object as
+   * HRegion's {@code this.conf} instance variable in a real HBase deployment. This is because
+   * HRegion's {@code this.conf} is a {@link CompoundConfiguration} object. Instead,
+   * {@code updatedConf} references the same Configuration object as HRegion's {@code this.baseConf}
+   * instance variable.
+   * @param updatedConf the dynamically updated configuration
    */
   @Override
-  public void onConfigurationChange(Configuration conf) {
-    this.storeHotnessProtector.update(conf);
-    // update coprocessorHost if the configuration has changed.
-    if (
-      CoprocessorConfigurationUtil.checkConfigurationChange(this.coprocessorHost, conf,
-        CoprocessorHost.REGION_COPROCESSOR_CONF_KEY,
-        CoprocessorHost.USER_REGION_COPROCESSOR_CONF_KEY)
-    ) {
-      LOG.info("Update the system coprocessors because the configuration has changed");
-      decorateRegionConfiguration(conf);
-      this.coprocessorHost = new RegionCoprocessorHost(this, rsServices, conf);
+  public void onConfigurationChange(Configuration updatedConf) {
+    this.storeHotnessProtector.update(updatedConf);
+
+    boolean originalIsReadOnlyEnabled = CoprocessorConfigurationUtil
+      .areReadOnlyCoprocessorsLoaded(this.conf, CoprocessorHost.REGION_COPROCESSOR_CONF_KEY);
+    boolean newReadOnlyEnabled = ConfigurationUtil.isReadOnlyModeEnabledInConf(updatedConf);
+
+    // The updatedConf is potentially a shared Configuration object, so we do not want to directly
+    // revert its read-only value if another active cluster already exists. For now, we reference
+    // updatedConf and create a copy for modification below if necessary.
+    Configuration confForCoprocessors = updatedConf;
+
+    if (originalIsReadOnlyEnabled && !newReadOnlyEnabled) {
+      // Changing this cluster from a replica to an active cluster. There should not be another
+      // active cluster already.
+      try {
+        FileSystem regionFs = getFilesystem();
+        Path rootDir = CommonFSUtils.getRootDir(this.conf);
+        ClusterId clusterId = FSUtils.getClusterIdFile(regionFs, rootDir, new ClusterId.Parser());
+        if (clusterId != null) {
+          ActiveClusterSuffix localSuffix = ActiveClusterSuffix.fromConfig(updatedConf, clusterId);
+          if (AbstractReadOnlyController.isAnotherClusterActive(regionFs, rootDir, localSuffix)) {
+            String activeClusterId = FSUtils.getClusterIdFromActiveClusterFile(regionFs, rootDir);
+            LOG.error(
+              "Cannot disable read-only mode for region {}. Another cluster with ID {} is already "
+                + "the active cluster on this storage location. Reverting {} to true.",
+              this, activeClusterId, HConstants.HBASE_GLOBAL_READONLY_ENABLED_KEY);
+            // Revert read-only mode here
+            confForCoprocessors = ConfigurationUtil.copyWithReadOnlyModeEnabled(updatedConf);
+            newReadOnlyEnabled = true;
+          }
+        }
+      } catch (IOException e) {
+        LOG.error("Failed to check active cluster status for region {}. "
+          + "Blocking read-only mode transition to prevent potential data corruption.", this, e);
+        // Revert read-only mode here
+        confForCoprocessors = ConfigurationUtil.copyWithReadOnlyModeEnabled(updatedConf);
+        newReadOnlyEnabled = true;
+      }
+    }
+
+    // HRegion's this.conf is a special Configuration type called CompoundConfiguration. This means
+    // we don't want to use the confForCoprocessors Configuration for creating a new
+    // RegionCoprocessorHost. Instead, we update this.conf and use that for decorating the region
+    // config and updating this.coprocessorHost.
+    CoprocessorConfigurationUtil.maybeUpdateCoprocessors(confForCoprocessors, this.conf,
+      originalIsReadOnlyEnabled, this.coprocessorHost, CoprocessorHost.REGION_COPROCESSOR_CONF_KEY,
+      false, this.toString(), conf -> {
+        decorateRegionConfiguration(conf);
+        this.coprocessorHost = new RegionCoprocessorHost(this, rsServices, conf);
+      });
+
+    // Changing this cluster from a replica to an active cluster
+    if (originalIsReadOnlyEnabled && !newReadOnlyEnabled) {
+      LOG.info("Cluster Read Only mode disabled");
+      for (HStore store : stores.values()) {
+        store.getStoreEngine().getStoreFileTracker().onTransitionToActive();
+      }
     }
   }
 
@@ -9134,5 +9196,17 @@ public class HRegion implements HeapSize, PropagatingConfigurationObserver, Regi
       allowedOnPath = ".*/src/test/.*")
   boolean isReadsEnabled() {
     return this.writestate.readsEnabled;
+  }
+
+  @RestrictedApi(explanation = "Should only be called in tests", link = "",
+      allowedOnPath = ".*/src/test/.*")
+  public ConfigurationManager getConfigurationManager() {
+    return configurationManager;
+  }
+
+  @RestrictedApi(explanation = "Should only be called in tests", link = "",
+      allowedOnPath = ".*/src/test/.*")
+  public Configuration getConfiguration() {
+    return this.conf;
   }
 }

@@ -79,9 +79,10 @@ import org.apache.hadoop.hbase.thrift2.generated.TTableDescriptor;
 import org.apache.hadoop.hbase.thrift2.generated.TTableName;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.Pair;
-import org.apache.thrift.TException;
-import org.apache.thrift.transport.TTransport;
 import org.apache.yetus.audience.InterfaceAudience;
+
+import org.apache.hbase.thirdparty.org.apache.thrift.TException;
+import org.apache.hbase.thirdparty.org.apache.thrift.transport.TTransport;
 
 @InterfaceAudience.Private
 public class ThriftAdmin implements Admin {
@@ -1375,6 +1376,11 @@ public class ThriftAdmin implements Admin {
   }
 
   @Override
+  public long refreshMeta() throws IOException {
+    throw new NotImplementedException("refreshMeta not supported in ThriftAdmin");
+  }
+
+  @Override
   public boolean replicationPeerModificationSwitch(boolean on, boolean drainProcedures)
     throws IOException {
     throw new NotImplementedException(
@@ -1385,5 +1391,20 @@ public class ThriftAdmin implements Admin {
   public boolean isReplicationPeerModificationEnabled() throws IOException {
     throw new NotImplementedException(
       "isReplicationPeerModificationEnabled not supported in ThriftAdmin");
+  }
+
+  @Override
+  public long refreshHFiles(final TableName tableName) throws IOException {
+    throw new NotImplementedException("refreshHFiles not supported in ThriftAdmin");
+  }
+
+  @Override
+  public long refreshHFiles(final String namespace) throws IOException {
+    throw new NotImplementedException("refreshHFiles not supported in ThriftAdmin");
+  }
+
+  @Override
+  public long refreshHFiles() throws IOException {
+    throw new NotImplementedException("refreshHFiles not supported in ThriftAdmin");
   }
 }

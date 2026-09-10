@@ -17,8 +17,8 @@
  */
 package org.apache.hadoop.hbase.rsgroup;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.ByteArrayInputStream;
 import java.io.Closeable;
@@ -1011,4 +1011,23 @@ public class VerifyingRSGroupAdmin implements Admin, Closeable {
     return admin.isReplicationPeerModificationEnabled();
   }
 
+  @Override
+  public long refreshMeta() throws IOException {
+    return admin.refreshMeta();
+  }
+
+  @Override
+  public long refreshHFiles(final TableName tableName) throws IOException {
+    return admin.refreshHFiles(tableName);
+  }
+
+  @Override
+  public long refreshHFiles(final String namespace) throws IOException {
+    return admin.refreshHFiles(namespace);
+  }
+
+  @Override
+  public long refreshHFiles() throws IOException {
+    return admin.refreshHFiles();
+  }
 }

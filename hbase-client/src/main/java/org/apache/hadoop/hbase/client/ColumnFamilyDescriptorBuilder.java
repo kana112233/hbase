@@ -828,8 +828,8 @@ public class ColumnFamilyDescriptorBuilder {
 
     /**
      * Compression types supported in hbase. LZO is not bundled as part of the hbase distribution.
-     * See See <a href="http://hbase.apache.org/book.html#lzo.compression">LZO Compression</a> for
-     * how to enable it.
+     * See <a href="https://hbase.apache.org/docs/compression#install-hadoop-native-lzo-support">
+     * LZO Compression</a> for how to enable it.
      * @param type Compression type setting.
      * @return this (for chained invocation)
      */
@@ -903,8 +903,8 @@ public class ColumnFamilyDescriptorBuilder {
 
     /**
      * Compression types supported in hbase. LZO is not bundled as part of the hbase distribution.
-     * See See <a href="http://hbase.apache.org/book.html#lzo.compression">LZO Compression</a> for
-     * how to enable it.
+     * See <a href="https://hbase.apache.org/docs/compression#install-hadoop-native-lzo-support">
+     * LZO Compression</a> for how to enable it.
      * @param type Compression type setting.
      * @return this (for chained invocation)
      */
@@ -1289,7 +1289,11 @@ public class ColumnFamilyDescriptorBuilder {
 
     @Override
     public String getConfigurationValue(String key) {
-      return configuration.get(key);
+      // Fall back to the values map (where the shell writes settings since HBASE-20819) so a
+      // single-key read sees a setting regardless of which map it landed in. Values win on
+      // collision.
+      String value = getValue(key);
+      return value != null ? value : configuration.get(key);
     }
 
     @Override

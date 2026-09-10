@@ -32,8 +32,9 @@
   <description>Apache HBase Website built with React and TypeScript</description>
 
   <properties>
-    <node.version>v22.20.0</node.version>
+    <node.version>v24.18.1</node.version>
     <npm.version>11.6.2</npm.version>
+    <website.ci.command>ci</website.ci.command>
   </properties>
 
   <build>
@@ -76,29 +77,18 @@
               <npmVersion>${npm.version}</npmVersion>
             </configuration>
           </execution>
-          <!-- Run npm install -->
+          <!-- Install exact dependencies from package-lock.json -->
           <execution>
-            <id>npm-install</id>
+            <id>npm-ci</id>
             <goals>
               <goal>npm</goal>
             </goals>
             <phase>pre-site</phase>
             <configuration>
-              <arguments>install</arguments>
+              <arguments>ci</arguments>
             </configuration>
           </execution>
-          <!-- Extract developers from parent pom.xml -->
-          <execution>
-            <id>extract-developers</id>
-            <goals>
-              <goal>npm</goal>
-            </goals>
-            <phase>pre-site</phase>
-            <configuration>
-              <arguments>run extract-developers</arguments>
-            </configuration>
-          </execution>
-          <!-- Run npm run ci -->
+          <!-- Run website CI command -->
           <execution>
             <id>npm-run-ci</id>
             <goals>
@@ -106,7 +96,7 @@
             </goals>
             <phase>site</phase>
             <configuration>
-              <arguments>run ci</arguments>
+              <arguments>run ${website.ci.command}</arguments>
             </configuration>
           </execution>
         </executions>
@@ -138,7 +128,7 @@
                 <phase>none</phase>
               </execution>
               <execution>
-                <id>npm-install</id>
+                <id>npm-ci</id>
                 <phase>none</phase>
               </execution>
               <execution>
@@ -149,6 +139,17 @@
           </plugin>
         </plugins>
       </build>
+    </profile>
+    <profile>
+      <id>skip-tests</id>
+      <activation>
+        <property>
+          <name>skipTests</name>
+        </property>
+      </activation>
+      <properties>
+        <website.ci.command>ci-skip-tests</website.ci.command>
+      </properties>
     </profile>
   </profiles>
 </project>
